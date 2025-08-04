@@ -51,7 +51,6 @@ end
 
 function M.generate_md_toc(format)
     local toc = {}
-    local cursor_node = ts_utils.get_node_at_cursor()
     local query = vim.treesitter.query.parse(
         "markdown",
         [[
@@ -67,7 +66,8 @@ function M.generate_md_toc(format)
             ]]
     )
     local table_entry = {}
-    for id, node, metadata in query:iter_captures(cursor_node:root(), 0) do
+    local tree = vim.treesitter.get_parser():parse()[1]
+    for id, node, metadata in query:iter_captures(tree:root(), 0) do
         local name = query.captures[id] -- name of the capture in the query
 
         -- typically useful info about the node:
@@ -101,8 +101,8 @@ function M.get_toc_position()
         "markdown",
         " [ (atx_heading heading_content: (_) @title (#eq? @title \"" .. M.toc_header .. "\")) ]"
     )
-    local cursor_node = ts_utils.get_node_at_cursor()
-    for id, node, metadata in query:iter_captures(cursor_node:root(), 0) do
+    local tree = vim.treesitter.get_parser():parse()[1]
+    for id, node, metadata in query:iter_captures(tree:root(), 0) do
         local name = query.captures[id] -- name of the capture in the query
         local text = vim.treesitter.get_node_text(node, 0)
 
@@ -113,8 +113,19 @@ function M.get_toc_position()
             while section:parent() ~= nil and section:type() ~= "section" do
                 section = section:parent()
             end
-            local startRow, startCol, endRow, endCol = section:range(false)
-            return startRow, startCol, endRow, endCol
+            local startRow, _, endRow, _ = section:range(false)
+
+            -- Only match contents that look like toc, so we don't accidentally destroy anything relevant
+            local lines = vim.api.nvim_buf_get_lines(0, startRow + 1, endRow, true)
+            endRow = startRow + 1
+            for i, line in ipairs(lines) do
+                if not line:match("^%s*-%s+%[") and not line:match("^%s*%d+%.%s+%[") then
+                    break
+                end
+                endRow = startRow + 1 + i
+            end
+
+            return startRow, endRow
         end
         break
     end
@@ -123,12 +134,13 @@ end
 
 function M.TOC(opts)
     local toc = M.generate_md_toc(opts.format)
-    local startRow, _, endRow, _ = M.get_toc_position()
+    local startRow, endRow = M.get_toc_position()
     if startRow ~= nil then
-        vim.api.nvim_buf_set_lines(0, startRow, endRow - 1, true, toc)
+        vim.api.nvim_buf_set_lines(0, startRow, endRow, true, toc)
     else
+        table.insert(toc, "")
         local line = vim.api.nvim_win_get_cursor(0)[1]
-        vim.api.nvim_buf_set_lines(0, line - 1, line, true, toc)
+        vim.api.nvim_buf_set_lines(0, line - 1, line - 1, true, toc)
     end
 end
 
